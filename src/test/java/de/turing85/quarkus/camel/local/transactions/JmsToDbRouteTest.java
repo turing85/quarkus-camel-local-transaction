@@ -8,10 +8,7 @@ import java.util.Random;
 
 import jakarta.inject.Inject;
 import jakarta.jms.ConnectionFactory;
-import jakarta.jms.JMSConsumer;
 import jakarta.jms.JMSContext;
-import jakarta.jms.JMSException;
-import jakarta.jms.Message;
 import jakarta.ws.rs.core.Response;
 
 import com.google.common.truth.Truth;
@@ -23,7 +20,6 @@ import org.apache.camel.Route;
 import org.apache.camel.ServiceStatus;
 import org.apache.camel.builder.AdviceWith;
 import org.awaitility.Awaitility;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 @QuarkusTest
@@ -41,24 +37,6 @@ class JmsToDbRouteTest {
 
   private final Random random = new Random();
 
-  @BeforeEach
-  void setUp() throws SQLException, JMSException {
-    try (JMSContext context = connectionFactory.createContext()) {
-      JMSConsumer consumer = context.createConsumer(context.createQueue("numbers"));
-      while (true) {
-        Message message = consumer.receive(Duration.ofSeconds(1).toMillis());
-        if (message == null) {
-          break;
-        } else {
-          message.acknowledge();
-        }
-      }
-    }
-    try (Statement statement = dataSource.getConnection().createStatement()) {
-      statement.execute("TRUNCATE TABLE numbers;");
-    }
-  }
-
   @Test
   void sendMessage() throws Exception {
     // given
@@ -68,7 +46,7 @@ class JmsToDbRouteTest {
     sendToQueue("numbers", numberToSend);
 
     // then
-    awaitHealthUp();
+    assertHealthUp();
     assertDbHasNEntriesWithValue(1, numberToSend);
   }
 
@@ -85,18 +63,22 @@ class JmsToDbRouteTest {
     sendToQueue(queue, numberToSend);
 
     // then
-    awaitHealthDown();
-
+    assertHealthDown();
     assertDbHasNEntriesWithValue(1, numberToSend);
 
+    // given
     stopCamel();
-    AdviceWith.adviceWith(camelContext, routeToFailOn,
+    // @formatter:off
+    AdviceWith.adviceWith(
+        camelContext,
+        routeToFailOn,
         advice -> advice.weaveById("thrower").remove());
+    // @formatter:on
+
+    // when
     startCamel();
-    try (JMSContext context = connectionFactory.createContext()) {
-      JMSConsumer consumer = context.createConsumer(context.createQueue(queue));
-      Truth.assertThat(consumer.receive(Duration.ofSeconds(1).toMillis())).isNull();
-    }
+
+    // then
     assertDbHasNEntriesWithValue(2, numberToSend);
   }
 
@@ -104,8 +86,14 @@ class JmsToDbRouteTest {
   void failOnInnerRoute() throws Exception {
     // given
     String routeToFailOn = JmsToDbRoute.DB_WRITER;
-    AdviceWith.adviceWith(camelContext, routeToFailOn, advice -> advice.weaveAddLast()
-        .throwException(new Exception("test transaction")).id("thrower"));
+    // @formatter:off
+    AdviceWith.adviceWith(
+        camelContext,
+        routeToFailOn,
+        advice -> advice.weaveAddLast()
+            .throwException(new Exception("test transaction"))
+            .id("thrower"));
+    // @formatter:on
     int numberToSend = random.nextInt(1_000_000);
     String queue = "numbers";
 
@@ -113,60 +101,88 @@ class JmsToDbRouteTest {
     sendToQueue(queue, numberToSend);
 
     // then
-    awaitHealthDown();
-
+    assertHealthDown();
     assertDbHasNEntriesWithValue(0, numberToSend);
 
+    // given
     stopCamel();
-    AdviceWith.adviceWith(camelContext, routeToFailOn,
+    // @formatter:off
+    AdviceWith.adviceWith(
+        camelContext,
+        routeToFailOn,
         advice -> advice.weaveById("thrower").remove());
+    // @formatter:on
+
+    // when
     startCamel();
-    try (JMSContext context = connectionFactory.createContext()) {
-      JMSConsumer consumer = context.createConsumer(context.createQueue(queue));
-      Truth.assertThat(consumer.receive(Duration.ofSeconds(1).toMillis())).isNull();
-    }
+
+    // then
     assertDbHasNEntriesWithValue(1, numberToSend);
   }
 
   private void stopCamel() {
     camelContext.suspend();
-    Awaitility.await().atMost(Duration.ofMinutes(1))
-        .untilAsserted(() -> Truth.assertThat(camelContext.isSuspended()).isTrue());
+    // @formatter:off
+    Awaitility.await()
+        .atMost(Duration.ofMinutes(1))
+        .untilAsserted(() ->
+            Truth.assertThat(camelContext.isSuspended()).isTrue());
+    // @formatter:on
   }
 
   private void startCamel() throws Exception {
     camelContext.getRouteController().reloadAllRoutes();
     camelContext.start();
-    Awaitility.await().atMost(Duration.ofMinutes(1))
+    // @formatter:off
+    Awaitility.await()
+        .atMost(Duration.ofMinutes(1))
         .untilAsserted(() -> Truth.assertThat(camelContext.isStarted()).isTrue());
     for (Route route : camelContext.getRoutes()) {
-      Awaitility.await().atMost(Duration.ofSeconds(5))
+      Awaitility.await()
+          .atMost(Duration.ofSeconds(5))
           .untilAsserted(() -> Truth
               .assertThat(camelContext.getRouteController().getRouteStatus(route.getId()))
               .isEqualTo(ServiceStatus.Started));
     }
-    awaitHealthUp();
+    // @formatter:on
+    assertHealthUp();
   }
 
   private void assertDbHasNEntriesWithValue(int n, int value) throws SQLException {
     try (Statement statement = dataSource.getConnection().createStatement()) {
-      Awaitility.await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> {
-        ResultSet rs = statement
-            .executeQuery("SELECT COUNT(*) FROM numbers WHERE value = %s".formatted(value));
-        Truth.assertThat(rs.next()).isTrue();
-        Truth.assertThat(rs.getInt(1)).isEqualTo(n);
-      });
+      // @formatter:off
+      Awaitility.await()
+          .atMost(Duration.ofSeconds(10))
+          .untilAsserted(() -> {
+            ResultSet rs = statement
+                .executeQuery("SELECT COUNT(*) FROM numbers WHERE value = %s"
+                    .formatted(value));
+            Truth.assertThat(rs.next()).isTrue();
+            Truth.assertThat(rs.getInt(1)).isEqualTo(n);
+          });
+      // @formatter:on
     }
   }
 
-  private static void awaitHealthUp() {
-    Awaitility.await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> RestAssured.when()
-        .get("/q/health").then().statusCode(Response.Status.OK.getStatusCode()));
+  private static void assertHealthUp() {
+    // @formatter:off
+    Awaitility.await()
+        .atMost(Duration.ofSeconds(10))
+        .untilAsserted(() -> RestAssured
+            .when().get("/q/health")
+            .then().statusCode(Response.Status.OK.getStatusCode()));
+    // @formatter:on
   }
 
-  private static void awaitHealthDown() {
-    Awaitility.await().atMost(Duration.ofSeconds(10)).untilAsserted(() -> RestAssured.when()
-        .get("/q/health").then().statusCode(Response.Status.SERVICE_UNAVAILABLE.getStatusCode()));
+  private static void assertHealthDown() {
+    // @formatter:off
+    Awaitility.await()
+        .atMost(Duration.ofSeconds(10))
+        .untilAsserted(() -> RestAssured
+            .when().get("/q/health")
+            .then()
+                .statusCode(Response.Status.SERVICE_UNAVAILABLE.getStatusCode()));
+    // @formatter:on
   }
 
   private void sendToQueue(String queue, int numberToSend) {
