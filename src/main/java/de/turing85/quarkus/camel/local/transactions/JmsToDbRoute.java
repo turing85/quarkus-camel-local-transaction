@@ -1,7 +1,5 @@
 package de.turing85.quarkus.camel.local.transactions;
 
-import java.time.Duration;
-
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.jms.ConnectionFactory;
 
@@ -15,32 +13,30 @@ import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.*;
 @ApplicationScoped
 @AllArgsConstructor
 public class JmsToDbRoute extends RouteBuilder {
+  public static final String NUMBER_RECEIVER_TO_DB = "number-receiver-to-db";
+  public static final String DB_WRITER = "db-writer";
+
   private final ConnectionFactory connectionFactory;
   private final AgroalDataSource dataSource;
 
   @Override
   public void configure() {
     // @formatter:off
-    from(
-        timer("sender")
-            .delay(Duration.ofSeconds(1).toMillis())
-            .period(Duration.ofSeconds(1).toMillis())
-            .includeMetadata(true))
-        .routeId("timer-number-sender")
-        .setBody(exchangeProperty(Exchange.TIMER_COUNTER))
-        .log("Sending ${body}")
-        .to(jms("numbers")
-            .connectionFactory(connectionFactory));
-
+    onException(Exception.class)
+        .log("Caught: ${exchangeProperty.%s}, stopping".formatted(Exchange.EXCEPTION_CAUGHT))
+        .process(exchange ->
+            new Thread(() -> exchange.getContext().suspend())
+                .start())
+        .handled(false);
     from(
         jms("numbers")
             .connectionFactory(connectionFactory)
             .transacted(true))
-        .routeId("number-receiver-to-db")
-        .to(direct("db-writer"));
+        .routeId(NUMBER_RECEIVER_TO_DB)
+        .to(direct(DB_WRITER));
 
-    from(direct("db-writer"))
-        .routeId("db-writer")
+    from(direct(DB_WRITER))
+        .routeId(DB_WRITER)
         .transacted("PROPAGATION_REQUIRES_NEW")
         .convertBodyTo(int.class)
         .log("Receiving ${body}")
