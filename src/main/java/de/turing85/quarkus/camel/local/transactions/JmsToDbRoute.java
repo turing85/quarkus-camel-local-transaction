@@ -15,6 +15,8 @@ import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.*;
 public class JmsToDbRoute extends RouteBuilder {
   public static final String NUMBER_RECEIVER_TO_DB = "number-receiver-to-db";
   public static final String DB_WRITER = "db-writer";
+  public static final String TOPIC = "numbers";
+  public static final String QUEUE = "numbers-to-db";
 
   private final ConnectionFactory connectionFactory;
   private final AgroalDataSource dataSource;
@@ -29,8 +31,11 @@ public class JmsToDbRoute extends RouteBuilder {
                 .start())
         .handled(false);
     from(
-        jms("numbers")
+        jms("topic:%s".formatted(TOPIC))
             .connectionFactory(connectionFactory)
+            .subscriptionShared(true)
+            .subscriptionDurable(true)
+            .durableSubscriptionName(QUEUE)
             .transacted(true))
         .routeId(NUMBER_RECEIVER_TO_DB)
         .to(direct(DB_WRITER));
@@ -40,6 +45,9 @@ public class JmsToDbRoute extends RouteBuilder {
         .transacted("PROPAGATION_REQUIRES_NEW")
         .convertBodyTo(int.class)
         .log("Receiving ${body}")
+        .to(sql("INSERT INTO numbers(value) VALUES(:#${body})")
+            .dataSource(dataSource))
+        .process(exchange -> exchange.getIn().setBody(exchange.getIn().getBody(Integer.class) + 1))
         .to(sql("INSERT INTO numbers(value) VALUES(:#${body})")
             .dataSource(dataSource));
     // @formatter:on
