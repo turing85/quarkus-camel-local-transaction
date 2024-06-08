@@ -58,13 +58,13 @@ class JmsToDbRouteTest {
 
     // then
     assertHealthUp();
-    assertDbHasNEntriesWithValue(1, numberToSend);
-    assertDbHasNEntriesWithValue(1, numberToSend + 1);
+    assertDbHasNEntriesForValue(1, numberToSend);
+    assertDbHasNEntriesForValue(1, numberToSend + 1);
     assertNoMoreMessagesOnQueue();
   }
 
   @Test
-  void failOnOuterRoute() throws Exception {
+  void failOnNumberReceiver() throws Exception {
     // given
     addThrowerToRoute(JmsToDbRoute.NUMBER_RECEIVER_TO_DB);
     final int numberToSend = random.nextInt(1_000_000);
@@ -74,8 +74,8 @@ class JmsToDbRouteTest {
 
     // then
     assertHealthDown();
-    assertDbHasNEntriesWithValue(1, numberToSend);
-    assertDbHasNEntriesWithValue(1, numberToSend + 1);
+    assertDbHasNEntriesForValue(1, numberToSend);
+    assertDbHasNEntriesForValue(1, numberToSend + 1);
     assertMessageOnQueue(numberToSend);
     assertNoMoreMessagesOnQueue();
 
@@ -84,7 +84,7 @@ class JmsToDbRouteTest {
   }
 
   @Test
-  void failOnInnerRoute() throws Exception {
+  void failOnDbWriter() throws Exception {
     // given
     addThrowerToRoute(JmsToDbRoute.DB_WRITER);
     final int numberToSend = random.nextInt(1_000_000);
@@ -94,8 +94,8 @@ class JmsToDbRouteTest {
 
     // then
     assertHealthDown();
-    assertDbHasNEntriesWithValue(0, numberToSend);
-    assertDbHasNEntriesWithValue(0, numberToSend + 1);
+    assertDbHasNEntriesForValue(0, numberToSend);
+    assertDbHasNEntriesForValue(0, numberToSend + 1);
     assertMessageOnQueue(numberToSend);
     assertNoMoreMessagesOnQueue();
 
@@ -125,19 +125,19 @@ class JmsToDbRouteTest {
     }
   }
 
-  private void addThrowerToRoute(String routeToFailOn) throws Exception {
+  private void addThrowerToRoute(String routeId) throws Exception {
     // @formatter:off
     AdviceWith.adviceWith(
         camelContext,
-        routeToFailOn,
+        routeId,
         advice -> advice.weaveAddLast()
-            .throwException(new Exception("test transaction")).id("thrower"));
+            .throwException(new Exception("Exception to test transaction")).id("thrower"));
     // @formatter:on
   }
 
-  private void sendToTopic(int numberToSend) {
+  private void sendToTopic(int bodyToSend) {
     try (JMSContext context = connectionFactory.createContext()) {
-      context.createProducer().send(context.createTopic(JmsToDbRoute.TOPIC), numberToSend);
+      context.createProducer().send(context.createTopic(JmsToDbRoute.TOPIC), bodyToSend);
     }
   }
 
@@ -162,14 +162,14 @@ class JmsToDbRouteTest {
     // @formatter:on
   }
 
-  private void assertMessageOnQueue(int numberToSend) throws JMSException {
+  private void assertMessageOnQueue(int expectedBody) throws JMSException {
     try (JMSContext context = connectionFactory.createContext()) {
       Queue queueDestination =
           context.createQueue("%s::%s".formatted(JmsToDbRoute.TOPIC, JmsToDbRoute.QUEUE));
       JMSConsumer consumer = context.createConsumer(queueDestination);
       Message message = consumer.receive(Duration.ofSeconds(1).toMillis());
       Truth.assertThat(message).isNotNull();
-      Truth.assertThat(message.getBody(Integer.class)).isEqualTo(numberToSend);
+      Truth.assertThat(message.getBody(Integer.class)).isEqualTo(expectedBody);
       message.acknowledge();
     }
   }
@@ -184,15 +184,14 @@ class JmsToDbRouteTest {
     }
   }
 
-  private void assertDbHasNEntriesWithValue(int n, int value) throws SQLException {
+  private void assertDbHasNEntriesForValue(int n, int value) throws SQLException {
     try (Statement statement = dataSource.getConnection().createStatement()) {
       // @formatter:off
       Awaitility.await()
           .atMost(Duration.ofSeconds(10))
           .untilAsserted(() -> {
             ResultSet rs = statement
-                .executeQuery(
-                    "SELECT COUNT(*) FROM numbers WHERE value = %s".formatted(value));
+                .executeQuery("SELECT COUNT(*) FROM numbers WHERE value = %s".formatted(value));
             Truth.assertThat(rs.next()).isTrue();
             Truth.assertThat(rs.getInt(1)).isEqualTo(n);
           });
@@ -200,12 +199,12 @@ class JmsToDbRouteTest {
     }
   }
 
-  private void removeThrowerFromRoute(String routeToFailOn) throws Exception {
+  private void removeThrowerFromRoute(String routeId) throws Exception {
     suspendCamel();
     // @formatter:off
     AdviceWith.adviceWith(
         camelContext,
-        routeToFailOn,
+        routeId,
         advice -> advice.weaveById("thrower").remove());
     // @formatter:on
     startCamel();
@@ -215,10 +214,16 @@ class JmsToDbRouteTest {
     camelContext.suspend();
     // @formatter:off
     Awaitility.await()
-        .atMost(Duration.ofMinutes(1))
-        .untilAsserted(() ->
-            Truth.assertThat(camelContext.isSuspended()).isTrue());
+        .atMost(Duration.ofSeconds(1))
+        .untilAsserted(() -> Truth.assertThat(camelContext.isSuspended()).isTrue());
+    camelContext.getRoutes().forEach(route ->
+        Awaitility.await()
+            .atMost(Duration.ofSeconds(1))
+            .untilAsserted(() -> Truth
+                .assertThat(camelContext.getRouteController().getRouteStatus(route.getId()))
+                .isEqualTo(ServiceStatus.Suspended)));
     // @formatter:on
+    assertHealthDown();
   }
 
   private void startCamel() throws Exception {
@@ -226,11 +231,11 @@ class JmsToDbRouteTest {
     camelContext.start();
     // @formatter:off
     Awaitility.await()
-        .atMost(Duration.ofMinutes(1))
+        .atMost(Duration.ofSeconds(1))
         .untilAsserted(() -> Truth.assertThat(camelContext.isStarted()).isTrue());
     camelContext.getRoutes().forEach(route ->
         Awaitility.await()
-            .atMost(Duration.ofSeconds(5))
+            .atMost(Duration.ofSeconds(1))
             .untilAsserted(() -> Truth
                 .assertThat(camelContext.getRouteController().getRouteStatus(route.getId()))
                 .isEqualTo(ServiceStatus.Started)));

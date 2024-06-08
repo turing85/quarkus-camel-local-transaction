@@ -7,8 +7,11 @@ import io.agroal.api.AgroalDataSource;
 import lombok.AllArgsConstructor;
 import org.apache.camel.Exchange;
 import org.apache.camel.builder.RouteBuilder;
+import org.eclipse.microprofile.context.ManagedExecutor;
 
-import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.*;
+import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.direct;
+import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.jms;
+import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.sql;
 
 @ApplicationScoped
 @AllArgsConstructor
@@ -20,16 +23,16 @@ public class JmsToDbRoute extends RouteBuilder {
 
   private final ConnectionFactory connectionFactory;
   private final AgroalDataSource dataSource;
+  private final ManagedExecutor executor;
 
   @Override
   public void configure() {
     // @formatter:off
     onException(Exception.class)
         .log("Caught: ${exchangeProperty.%s}, stopping".formatted(Exchange.EXCEPTION_CAUGHT))
-        .process(exchange ->
-            new Thread(() -> exchange.getContext().suspend())
-                .start())
+        .process(exchange -> executor.submit(() -> exchange.getContext().suspend()))
         .handled(false);
+
     from(
         jms("topic:%s".formatted(TOPIC))
             .connectionFactory(connectionFactory)
