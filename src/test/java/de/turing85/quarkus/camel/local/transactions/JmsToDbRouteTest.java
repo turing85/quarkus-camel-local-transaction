@@ -51,7 +51,7 @@ class JmsToDbRouteTest {
   @Test
   void sendMessage() throws Exception {
     // given
-    int numberToSend = random.nextInt(1_000_000);
+    final int numberToSend = random.nextInt(1_000_000);
 
     // when
     sendToTopic(numberToSend);
