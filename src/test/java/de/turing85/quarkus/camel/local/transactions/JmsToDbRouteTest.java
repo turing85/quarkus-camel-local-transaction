@@ -74,8 +74,8 @@ class JmsToDbRouteTest {
 
     // then
     assertHealthDown();
-    assertDbHasNEntriesForValue(1, numberToSend);
-    assertDbHasNEntriesForValue(1, numberToSend + 1);
+    assertDbHasNEntriesForValue(4, numberToSend);
+    assertDbHasNEntriesForValue(4, numberToSend + 1);
     assertMessageOnQueue(numberToSend);
     assertNoMoreMessagesOnQueue();
 

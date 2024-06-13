@@ -5,6 +5,7 @@ import jakarta.jms.ConnectionFactory;
 
 import io.agroal.api.AgroalDataSource;
 import lombok.AllArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.camel.Exchange;
 import org.apache.camel.builder.RouteBuilder;
 import org.eclipse.microprofile.context.ManagedExecutor;
@@ -13,6 +14,7 @@ import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.direct;
 import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.jms;
 import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.sql;
 
+@Slf4j
 @ApplicationScoped
 @AllArgsConstructor
 public class JmsToDbRoute extends RouteBuilder {
@@ -29,9 +31,17 @@ public class JmsToDbRoute extends RouteBuilder {
   public void configure() {
     // @formatter:off
     onException(Exception.class)
-        .log("Caught: ${exchangeProperty.%s}, stopping".formatted(Exchange.EXCEPTION_CAUGHT))
-        .process(exchange -> executor.submit(() -> exchange.getContext().suspend()))
-        .handled(false);
+        .maximumRedeliveries(3)
+        .log("Caught: ${exchangeProperty.%s}".formatted(Exchange.EXCEPTION_CAUGHT))
+        .process(exchange -> {
+          log.info("Rolling back transaction");
+          executor.execute(exchange.getContext()::suspend);
+          exchange.setRollbackOnly(true);
+        })
+        .onRedelivery(exchange -> log.info(
+            "Redelivery {} / {}",
+            exchange.getIn().getHeader(Exchange.REDELIVERY_COUNTER),
+            exchange.getIn().getHeader(Exchange.REDELIVERY_MAX_COUNTER)));
 
     from(
         jms("topic:%s".formatted(TOPIC))
@@ -40,7 +50,9 @@ public class JmsToDbRoute extends RouteBuilder {
             .subscriptionDurable(true)
             .durableSubscriptionName(QUEUE)
             .transacted(true))
+        .transacted()
         .routeId(NUMBER_RECEIVER_TO_DB)
+        .log("Receiving ${body}")
         .to(direct(DB_WRITER));
 
     from(direct(DB_WRITER))
