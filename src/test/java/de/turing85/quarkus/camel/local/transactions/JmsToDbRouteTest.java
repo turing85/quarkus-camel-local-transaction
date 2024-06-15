@@ -21,14 +21,21 @@ import io.agroal.api.AgroalDataSource;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.RestAssured;
 import org.apache.camel.CamelContext;
+import org.apache.camel.Route;
 import org.apache.camel.ServiceStatus;
 import org.apache.camel.builder.AdviceWith;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import static java.util.function.Predicate.not;
+
+import static de.turing85.quarkus.camel.local.transactions.JmsToDbRoute.GLOBAL_STOP_VARIABLE;
+
 @QuarkusTest
 class JmsToDbRouteTest {
+  public static final String THROWER_ID = "thrower";
+
   @Inject
   CamelContext camelContext;
 
@@ -131,8 +138,56 @@ class JmsToDbRouteTest {
         camelContext,
         routeId,
         advice -> advice.weaveAddLast()
-            .throwException(new Exception("Exception to test transaction")).id("thrower"));
+            .throwException(new Exception("Exception to test transaction")).id(THROWER_ID));
     // @formatter:on
+  }
+
+  private void removeThrowerFromRoute(String routeId) throws Exception {
+    stopAllRoutes();
+    // @formatter:off
+    AdviceWith.adviceWith(
+        camelContext,
+        routeId,
+        advice -> advice.weaveById(THROWER_ID).remove());
+    // @formatter:on
+    startAllRoutes();
+  }
+
+  private void stopAllRoutes() throws Exception {
+    camelContext.getRouteController().stopAllRoutes();
+    // @formatter:off
+    camelContext.getRoutes().stream()
+        .map(Route::getRouteId)
+        .forEach(routeId ->
+            Awaitility.await()
+                .atMost(Duration.ofSeconds(1))
+                .untilAsserted(() -> Truth
+                    .assertThat(camelContext.getRouteController().getRouteStatus(routeId))
+                    .isEqualTo(ServiceStatus.Stopped)));
+    // @formatter:on
+    assertHealthDown();
+  }
+
+  private void startAllRoutes() {
+    camelContext.setVariable(GLOBAL_STOP_VARIABLE, false);
+    camelContext.getRoutes().stream().map(Route::getRouteId)
+        .filter(
+            not(routeId -> camelContext.getRouteController().getRouteStatus(routeId).isStarted()))
+        .forEach(routeId -> {
+          try {
+            camelContext.getRouteController().startRoute(routeId);
+          } catch (Exception e) {
+            throw new RuntimeException(e);
+          }
+        });
+    camelContext.getRoutes().stream().map(Route::getRouteId)
+        .forEach(
+            routeId -> Awaitility.await().atMost(Duration.ofSeconds(1))
+                .untilAsserted(() -> Truth
+                    .assertThat(camelContext.getRouteController().getRouteStatus(routeId))
+                    .isEqualTo(ServiceStatus.Started)));
+    // @formatter:on
+    assertHealthUp();
   }
 
   private void sendToTopic(int bodyToSend) {
@@ -157,8 +212,7 @@ class JmsToDbRouteTest {
         .atMost(Duration.ofSeconds(10))
         .untilAsserted(() -> RestAssured
             .when().get("/q/health")
-            .then()
-            .statusCode(Response.Status.SERVICE_UNAVAILABLE.getStatusCode()));
+            .then().statusCode(Response.Status.SERVICE_UNAVAILABLE.getStatusCode()));
     // @formatter:on
   }
 
@@ -197,49 +251,5 @@ class JmsToDbRouteTest {
           });
       // @formatter:on
     }
-  }
-
-  private void removeThrowerFromRoute(String routeId) throws Exception {
-    suspendCamel();
-    // @formatter:off
-    AdviceWith.adviceWith(
-        camelContext,
-        routeId,
-        advice -> advice.weaveById("thrower").remove());
-    // @formatter:on
-    startCamel();
-  }
-
-  private void suspendCamel() {
-    camelContext.suspend();
-    // @formatter:off
-    Awaitility.await()
-        .atMost(Duration.ofSeconds(1))
-        .untilAsserted(() -> Truth.assertThat(camelContext.isSuspended()).isTrue());
-    camelContext.getRoutes().forEach(route ->
-        Awaitility.await()
-            .atMost(Duration.ofSeconds(1))
-            .untilAsserted(() -> Truth
-                .assertThat(camelContext.getRouteController().getRouteStatus(route.getId()))
-                .isEqualTo(ServiceStatus.Suspended)));
-    // @formatter:on
-    assertHealthDown();
-  }
-
-  private void startCamel() throws Exception {
-    camelContext.getRouteController().reloadAllRoutes();
-    camelContext.start();
-    // @formatter:off
-    Awaitility.await()
-        .atMost(Duration.ofSeconds(1))
-        .untilAsserted(() -> Truth.assertThat(camelContext.isStarted()).isTrue());
-    camelContext.getRoutes().forEach(route ->
-        Awaitility.await()
-            .atMost(Duration.ofSeconds(1))
-            .untilAsserted(() -> Truth
-                .assertThat(camelContext.getRouteController().getRouteStatus(route.getId()))
-                .isEqualTo(ServiceStatus.Started)));
-    // @formatter:on
-    assertHealthUp();
   }
 }

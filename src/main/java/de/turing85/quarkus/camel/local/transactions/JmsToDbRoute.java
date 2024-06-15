@@ -4,7 +4,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.jms.ConnectionFactory;
 
 import io.agroal.api.AgroalDataSource;
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.camel.Exchange;
 import org.apache.camel.builder.RouteBuilder;
@@ -16,12 +16,13 @@ import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.sql;
 
 @Slf4j
 @ApplicationScoped
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class JmsToDbRoute extends RouteBuilder {
   public static final String NUMBER_RECEIVER_TO_DB = "number-receiver-to-db";
   public static final String DB_WRITER = "db-writer";
   public static final String TOPIC = "numbers";
   public static final String QUEUE = "numbers-to-db";
+  public static final String GLOBAL_STOP_VARIABLE = "global:stop";
 
   private final ConnectionFactory connectionFactory;
   private final AgroalDataSource dataSource;
@@ -35,13 +36,26 @@ public class JmsToDbRoute extends RouteBuilder {
         .log("Caught: ${exchangeProperty.%s}".formatted(Exchange.EXCEPTION_CAUGHT))
         .process(exchange -> {
           log.info("Rolling back transaction");
-          executor.execute(exchange.getContext()::suspend);
           exchange.setRollbackOnly(true);
+          exchange.getContext().setVariable(GLOBAL_STOP_VARIABLE, true);
         })
+        .rollback()
         .onRedelivery(exchange -> log.info(
             "Redelivery {} / {}",
             exchange.getIn().getHeader(Exchange.REDELIVERY_COUNTER),
             exchange.getIn().getHeader(Exchange.REDELIVERY_MAX_COUNTER)));
+
+    interceptFrom("jms:*")
+        .when(variable(GLOBAL_STOP_VARIABLE).isEqualTo(true))
+            .process(exchange -> {
+              log.info("stopping");
+              exchange.setVariable(GLOBAL_STOP_VARIABLE, false);
+              exchange.setRollbackOnly(true);
+              executor.submit(() -> {
+                  exchange.getContext().getRouteController().stopAllRoutes();
+                  return null;
+              });
+            });
 
     from(
         jms("topic:%s".formatted(TOPIC))
