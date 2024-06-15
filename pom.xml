@@ -12,10 +12,12 @@
     <properties>
         <!-- Plugin versions -->
         <assembly-plugin.version>3.7.1</assembly-plugin.version>
+        <build-helper-maven-plugin.version>3.6.0</build-helper-maven-plugin.version>
         <compiler-plugin.version>3.13.0</compiler-plugin.version>
         <dependency-check-maven.version>9.2.0</dependency-check-maven.version>
         <formatter-maven-plugin.version>2.24.1</formatter-maven-plugin.version>
         <impsort-maven-plugin.version>1.10.0</impsort-maven-plugin.version>
+        <source-plugin.version>3.3.1</source-plugin.version>
         <surefire-plugin.version>3.2.5</surefire-plugin.version>
 
         <!-- Dependency versions -->
@@ -38,6 +40,7 @@
 
         <!-- Project setup -->
         <assembly-plugin.skip>false</assembly-plugin.skip>
+        <attach-elf.skip>true</attach-elf.skip>
         <dependency-check-maven.skip>true</dependency-check-maven.skip>
         <dependency-check-maven.formats>html,junit</dependency-check-maven.formats>
 
@@ -185,41 +188,6 @@
                 </configuration>
             </plugin>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <version>${assembly-plugin.version}</version>
-                <executions>
-                    <execution>
-                        <id>tar-gz</id>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <phase>package</phase>
-                        <configuration>
-                            <appendAssemblyId>false</appendAssemblyId>
-                            <inlineDescriptors>
-                                <inlineDescriptor>
-                                    <id>tar-gz</id>
-                                    <includeBaseDirectory>false</includeBaseDirectory>
-                                    <formats>
-                                        <format>tar.gz</format>
-                                    </formats>
-                                    <fileSets>
-                                        <fileSet>
-                                            <outputDirectory>/</outputDirectory>
-                                            <directory>${project.build.directory}/quarkus-app</directory>
-                                            <useDefaultExcludes>false</useDefaultExcludes>
-                                        </fileSet>
-                                    </fileSets>
-                                </inlineDescriptor>
-                            </inlineDescriptors>
-                            <skipAssembly>${assembly-plugin.skip}</skipAssembly>
-                            <tarLongFileMode>posix</tarLongFileMode>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
                 <groupId>org.owasp</groupId>
                 <artifactId>dependency-check-maven</artifactId>
                 <version>${dependency-check-maven.version}</version>
@@ -255,6 +223,78 @@
                                 <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
                                 <maven.home>${maven.home}</maven.home>
                             </systemPropertyVariables>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>${source-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>jar-no-fork</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>${assembly-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>tar-gz</id>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <phase>verify</phase>
+                        <configuration>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <inlineDescriptors>
+                                <inlineDescriptor>
+                                    <id>tar-gz</id>
+                                    <includeBaseDirectory>false</includeBaseDirectory>
+                                    <formats>
+                                        <format>tar.gz</format>
+                                    </formats>
+                                    <fileSets>
+                                        <fileSet>
+                                            <outputDirectory>/</outputDirectory>
+                                            <directory>${project.build.directory}/quarkus-app</directory>
+                                            <useDefaultExcludes>false</useDefaultExcludes>
+                                        </fileSet>
+                                    </fileSets>
+                                </inlineDescriptor>
+                            </inlineDescriptors>
+                            <skipAssembly>${assembly-plugin.skip}</skipAssembly>
+                            <tarLongFileMode>posix</tarLongFileMode>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>${build-helper-maven-plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>attach-elf</id>
+                        <goals>
+                            <goal>attach-artifact</goal>
+                        </goals>
+                        <phase>verify</phase>
+                        <configuration>
+                            <artifacts>
+                                <artifact>
+                                    <file>${project.build.directory}/${project.artifactId}-${project.version}-runner</file>
+                                    <type>elf</type>
+                                </artifact>
+                            </artifacts>
+                            <skipAttach>${attach-elf.skip}</skipAttach>
                         </configuration>
                     </execution>
                 </executions>
@@ -458,6 +498,7 @@
             </activation>
             <properties>
                 <assembly-plugin.skip>true</assembly-plugin.skip>
+                <attach-elf.skip>false</attach-elf.skip>
                 <quarkus.container-image.additional-tags>native</quarkus.container-image.additional-tags>
                 <quarkus.native.enabled>true</quarkus.native.enabled>
                 <quarkus.package.jar.add-runner-suffix>true</quarkus.package.jar.add-runner-suffix>
@@ -473,6 +514,7 @@
             </activation>
             <properties>
                 <assembly-plugin.skip>true</assembly-plugin.skip>
+                <attach-elf.skip>false</attach-elf.skip>
                 <quarkus.container-image.additional-tags>native</quarkus.container-image.additional-tags>
                 <quarkus.docker.dockerfile-native-path>src/main/container/Containerfile.native-distroless-compressed</quarkus.docker.dockerfile-native-path>
                 <quarkus.native.enabled>true</quarkus.native.enabled>
