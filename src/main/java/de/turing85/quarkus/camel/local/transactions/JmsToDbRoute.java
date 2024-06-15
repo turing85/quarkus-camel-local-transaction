@@ -55,7 +55,8 @@ public class JmsToDbRoute extends RouteBuilder {
                   exchange.getContext().getRouteController().stopAllRoutes();
                   return null;
               });
-            });
+            })
+        .end();
 
     from(
         jms("topic:%s".formatted(TOPIC))
