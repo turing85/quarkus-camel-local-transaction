@@ -10,9 +10,7 @@ import org.apache.camel.Exchange;
 import org.apache.camel.builder.RouteBuilder;
 import org.eclipse.microprofile.context.ManagedExecutor;
 
-import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.direct;
-import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.jms;
-import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.sql;
+import static org.apache.camel.builder.endpoint.StaticEndpointBuilders.*;
 
 @Slf4j
 @ApplicationScoped
@@ -34,28 +32,21 @@ public class JmsToDbRoute extends RouteBuilder {
     onException(Exception.class)
         .maximumRedeliveries(3)
         .log("Caught: ${exchangeProperty.%s}".formatted(Exchange.EXCEPTION_CAUGHT))
-        .process(exchange -> {
-          log.info("Rolling back transaction");
-          exchange.setRollbackOnly(true);
-          exchange.getContext().setVariable(GLOBAL_STOP_VARIABLE, true);
-        })
-        .rollback()
+        .log("Rolling back transaction")
+        .setVariable(GLOBAL_STOP_VARIABLE).constant(true)
+        .markRollbackOnly()
         .onRedelivery(exchange -> log.info(
             "Redelivery {} / {}",
             exchange.getIn().getHeader(Exchange.REDELIVERY_COUNTER),
             exchange.getIn().getHeader(Exchange.REDELIVERY_MAX_COUNTER)));
 
-    interceptFrom("jms:*")
+    interceptFrom("*")
         .when(variable(GLOBAL_STOP_VARIABLE).isEqualTo(true))
-            .process(exchange -> {
-              log.info("stopping");
-              exchange.setVariable(GLOBAL_STOP_VARIABLE, false);
-              exchange.setRollbackOnly(true);
-              executor.submit(() -> {
-                  exchange.getContext().getRouteController().stopAllRoutes();
-                  return null;
-              });
-            })
+            .log("stopping (received on ${exchange.getFromRouteId()})")
+            .setVariable(GLOBAL_STOP_VARIABLE).constant(false)
+            .process(exchange -> executor.submit(
+                () -> JmsToDbRoute.suspendAllRoutes(exchange)))
+            .markRollbackOnly()
         .end();
 
     from(
@@ -77,9 +68,15 @@ public class JmsToDbRoute extends RouteBuilder {
         .log("Receiving ${body}")
         .to(sql("INSERT INTO numbers(value) VALUES(:#${body})")
             .dataSource(dataSource))
-        .process(exchange -> exchange.getIn().setBody(exchange.getIn().getBody(Integer.class) + 1))
+        .process(exchange -> exchange.getIn().setBody(
+                exchange.getIn().getBody(int.class) + 1))
         .to(sql("INSERT INTO numbers(value) VALUES(:#${body})")
             .dataSource(dataSource));
     // @formatter:on
+  }
+
+  private static Void suspendAllRoutes(Exchange exchange) throws Exception {
+    exchange.getContext().getRouteController().stopAllRoutes();
+    return null;
   }
 }

@@ -50,9 +50,11 @@ class JmsToDbRouteTest {
   private final Random random = new Random();
 
   @BeforeEach
-  void setup() throws JMSException, SQLException {
+  void setup() throws Exception {
+    stopAllRoutes();
     emptyQueue();
     emptyTable();
+    startAllRoutes();
   }
 
   @Test
@@ -72,85 +74,47 @@ class JmsToDbRouteTest {
 
   @Test
   void failOnNumberReceiver() throws Exception {
-    // given
-    addThrowerToRoute(JmsToDbRoute.NUMBER_RECEIVER_TO_DB);
-    final int numberToSend = random.nextInt(1_000_000);
+    try {
+      // given
+      addThrowerToRoute(JmsToDbRoute.NUMBER_RECEIVER_TO_DB);
+      final int numberToSend = random.nextInt(1_000_000);
 
-    // when
-    sendToTopic(numberToSend);
+      // when
+      sendToTopic(numberToSend);
 
-    // then
-    assertHealthDown();
-    assertDbHasNEntriesForValue(4, numberToSend);
-    assertDbHasNEntriesForValue(4, numberToSend + 1);
-    assertMessageOnQueue(numberToSend);
-    assertNoMoreMessagesOnQueue();
-
-    // cleanup
-    removeThrowerFromRoute(JmsToDbRoute.NUMBER_RECEIVER_TO_DB);
+      // then
+      assertHealthDown();
+      assertDbHasNEntriesForValue(4, numberToSend);
+      assertDbHasNEntriesForValue(4, numberToSend + 1);
+      assertMessageOnQueue(numberToSend);
+      assertNoMoreMessagesOnQueue();
+    } finally {
+      // cleanup
+      removeThrowerFromRoute(JmsToDbRoute.NUMBER_RECEIVER_TO_DB);
+    }
   }
 
   @Test
   void failOnDbWriter() throws Exception {
-    // given
-    addThrowerToRoute(JmsToDbRoute.DB_WRITER);
-    final int numberToSend = random.nextInt(1_000_000);
+    try {
+      // given
+      addThrowerToRoute(JmsToDbRoute.DB_WRITER);
+      final int numberToSend = random.nextInt(1_000_000);
 
-    // when
-    sendToTopic(numberToSend);
+      // when
+      sendToTopic(numberToSend);
 
-    // then
-    assertHealthDown();
-    assertDbHasNEntriesForValue(0, numberToSend);
-    assertDbHasNEntriesForValue(0, numberToSend + 1);
-    assertMessageOnQueue(numberToSend);
-    assertNoMoreMessagesOnQueue();
+      // then
+      assertHealthDown();
+      assertDbHasNEntriesForValue(0, numberToSend);
+      assertDbHasNEntriesForValue(0, numberToSend + 1);
+      assertMessageOnQueue(numberToSend);
+      assertNoMoreMessagesOnQueue();
 
-    // cleanup
-    removeThrowerFromRoute(JmsToDbRoute.DB_WRITER);
-  }
-
-  private void emptyQueue() throws JMSException {
-    try (JMSContext context = connectionFactory.createContext()) {
-      Queue queueDestination =
-          context.createQueue("%s::%s".formatted(JmsToDbRoute.TOPIC, JmsToDbRoute.QUEUE));
-      JMSConsumer consumer = context.createConsumer(queueDestination);
-      while (true) {
-        Message message = consumer.receive(Duration.ofSeconds(1).toMillis());
-        if (Objects.nonNull(message)) {
-          message.acknowledge();
-        } else {
-          break;
-        }
-      }
+    } finally {
+      // cleanup
+      removeThrowerFromRoute(JmsToDbRoute.DB_WRITER);
     }
-  }
-
-  private void emptyTable() throws SQLException {
-    try (Statement statement = dataSource.getConnection().createStatement()) {
-      statement.execute("TRUNCATE TABLE numbers");
-    }
-  }
-
-  private void addThrowerToRoute(String routeId) throws Exception {
-    // @formatter:off
-    AdviceWith.adviceWith(
-        camelContext,
-        routeId,
-        advice -> advice.weaveAddLast()
-            .throwException(new Exception("Exception to test transaction")).id(THROWER_ID));
-    // @formatter:on
-  }
-
-  private void removeThrowerFromRoute(String routeId) throws Exception {
-    stopAllRoutes();
-    // @formatter:off
-    AdviceWith.adviceWith(
-        camelContext,
-        routeId,
-        advice -> advice.weaveById(THROWER_ID).remove());
-    // @formatter:on
-    startAllRoutes();
   }
 
   private void stopAllRoutes() throws Exception {
@@ -188,6 +152,47 @@ class JmsToDbRouteTest {
                     .isEqualTo(ServiceStatus.Started)));
     // @formatter:on
     assertHealthUp();
+  }
+
+  private void emptyQueue() throws JMSException {
+    try (JMSContext context = connectionFactory.createContext()) {
+      Queue queueDestination =
+          context.createQueue("%s::%s".formatted(JmsToDbRoute.TOPIC, JmsToDbRoute.QUEUE));
+      JMSConsumer consumer = context.createConsumer(queueDestination);
+      while (true) {
+        Message message = consumer.receive(Duration.ofSeconds(1).toMillis());
+        if (Objects.nonNull(message)) {
+          message.acknowledge();
+        } else {
+          break;
+        }
+      }
+    }
+  }
+
+  private void emptyTable() throws SQLException {
+    try (Statement statement = dataSource.getConnection().createStatement()) {
+      statement.execute("TRUNCATE TABLE numbers");
+    }
+  }
+
+  private void addThrowerToRoute(String routeId) throws Exception {
+    // @formatter:off
+    AdviceWith.adviceWith(
+        camelContext,
+        routeId,
+        advice -> advice.weaveAddLast()
+            .throwException(new Exception("Exception to test transaction")).id(THROWER_ID));
+    // @formatter:on
+  }
+
+  private void removeThrowerFromRoute(String routeId) throws Exception {
+    // @formatter:off
+    AdviceWith.adviceWith(
+        camelContext,
+        routeId,
+        advice -> advice.weaveById(THROWER_ID).remove());
+    // @formatter:on
   }
 
   private void sendToTopic(int bodyToSend) {
