@@ -24,6 +24,7 @@ import org.apache.camel.CamelContext;
 import org.apache.camel.Route;
 import org.apache.camel.ServiceStatus;
 import org.apache.camel.builder.AdviceWith;
+import org.apache.camel.spi.RouteController;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -110,7 +111,6 @@ class JmsToDbRouteTest {
       assertDbHasNEntriesForValue(0, numberToSend + 1);
       assertMessageOnQueue(numberToSend);
       assertNoMoreMessagesOnQueue();
-
     } finally {
       // cleanup
       removeThrowerFromRoute(JmsToDbRoute.DB_WRITER);
@@ -119,39 +119,40 @@ class JmsToDbRouteTest {
 
   private void stopAllRoutes() throws Exception {
     camelContext.getRouteController().stopAllRoutes();
-    // @formatter:off
-    camelContext.getRoutes().stream()
-        .map(Route::getRouteId)
-        .forEach(routeId ->
-            Awaitility.await()
-                .atMost(Duration.ofSeconds(1))
-                .untilAsserted(() -> Truth
-                    .assertThat(camelContext.getRouteController().getRouteStatus(routeId))
-                    .isEqualTo(ServiceStatus.Stopped)));
-    // @formatter:on
+    assertAllRoutesHaveStatus(ServiceStatus.Stopped);
     assertHealthDown();
   }
 
   private void startAllRoutes() {
     camelContext.setVariable(GLOBAL_STOP_VARIABLE, false);
-    camelContext.getRoutes().stream().map(Route::getRouteId)
-        .filter(
-            not(routeId -> camelContext.getRouteController().getRouteStatus(routeId).isStarted()))
+    // @formatter:off
+    RouteController routeController = camelContext.getRouteController();
+    camelContext.getRoutes().stream()
+        .map(Route::getRouteId)
+        .toList().stream()
+        .filter(not(routeId -> routeController.getRouteStatus(routeId).isStarted()))
         .forEach(routeId -> {
           try {
-            camelContext.getRouteController().startRoute(routeId);
+            routeController.startRoute(routeId);
           } catch (Exception e) {
             throw new RuntimeException(e);
           }
         });
-    camelContext.getRoutes().stream().map(Route::getRouteId)
-        .forEach(
-            routeId -> Awaitility.await().atMost(Duration.ofSeconds(1))
-                .untilAsserted(() -> Truth
-                    .assertThat(camelContext.getRouteController().getRouteStatus(routeId))
-                    .isEqualTo(ServiceStatus.Started)));
     // @formatter:on
+    assertAllRoutesHaveStatus(ServiceStatus.Started);
     assertHealthUp();
+  }
+
+  private void assertAllRoutesHaveStatus(ServiceStatus status) {
+    // @formatter:off
+    camelContext.getRoutes().stream()
+        .map(Route::getRouteId)
+        .forEach(routeId -> Awaitility.await()
+            .atMost(Duration.ofSeconds(1))
+            .untilAsserted(() -> Truth
+                .assertThat(camelContext.getRouteController().getRouteStatus(routeId))
+                .isEqualTo(status)));
+    // @formatter:on
   }
 
   private void emptyQueue() throws JMSException {
